@@ -449,10 +449,11 @@ function RegistroPanel({ isAdmin, tournaments, loading, onRefresh, onDelete, onS
 // ADMIN MODAL
 // ============================================================
 
-function AdminModal({ onClose, tournaments, loading, onRefresh, onDelete, onSelect, selectedId }) {
+function AdminModal({ onClose, tournaments, loading, onRefresh, onDelete, onSelect, selectedId, playerNames, onDeletePlayer }) {
   const [auth, setAuth] = useState(false);
   const [pwInput, setPwInput] = useState("");
   const [pwError, setPwError] = useState("");
+  const [adminTab, setAdminTab] = useState("tornei"); // "tornei" | "giocatori" 
 
   const handleLogin = () => {
     const expected = import.meta.env.VITE_ADMIN_PASSWORD || "admin123";
@@ -522,24 +523,74 @@ function AdminModal({ onClose, tournaments, loading, onRefresh, onDelete, onSele
             </div>
           ) : (
             <div>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
-                <div style={{ fontSize: 12, color: COLORS.textDim, letterSpacing: 2 }}>
-                  REGISTRO TORNEI ({tournaments.length})
-                </div>
+              {/* Admin tabs */}
+              <div style={{ display: "flex", gap: 4, marginBottom: 16 }}>
+                {[["tornei", `🏆 Tornei (${tournaments.length})`], ["giocatori", `👤 Giocatori (${playerNames.length})`]].map(([tab, label]) => (
+                  <button key={tab} onClick={() => setAdminTab(tab)} style={{
+                    padding: "7px 16px", borderRadius: 6, cursor: "pointer",
+                    fontFamily: "Cinzel, serif", fontSize: 11, letterSpacing: 1,
+                    background: adminTab === tab ? COLORS.accent : COLORS.surface,
+                    color: adminTab === tab ? "#000" : COLORS.textDim,
+                    border: `1px solid ${adminTab === tab ? COLORS.accent : COLORS.border}`,
+                    fontWeight: adminTab === tab ? 700 : 400,
+                  }}>{label}</button>
+                ))}
                 <button onClick={onRefresh} style={{
-                  background: "transparent", border: "none", color: COLORS.textDim,
-                  cursor: "pointer", fontSize: 16,
+                  marginLeft: "auto", background: "transparent", border: "none",
+                  color: COLORS.textDim, cursor: "pointer", fontSize: 16,
                 }} title="Aggiorna">🔄</button>
               </div>
-              <RegistroPanel
-                isAdmin={true}
-                tournaments={tournaments}
-                loading={loading}
-                onRefresh={onRefresh}
-                onDelete={onDelete}
-                onSelect={onSelect}
-                selectedId={selectedId}
-              />
+
+              {/* Tab: Tornei */}
+              {adminTab === "tornei" && (
+                <RegistroPanel
+                  isAdmin={true}
+                  tournaments={tournaments}
+                  loading={loading}
+                  onRefresh={onRefresh}
+                  onDelete={onDelete}
+                  onSelect={onSelect}
+                  selectedId={selectedId}
+                />
+              )}
+
+              {/* Tab: Giocatori */}
+              {adminTab === "giocatori" && (
+                <div>
+                  {playerNames.length === 0 ? (
+                    <div style={{ textAlign: "center", padding: 32, color: COLORS.textDim, fontFamily: "Crimson Pro, serif" }}>
+                      <div style={{ fontSize: 28, marginBottom: 8 }}>👤</div>
+                      Nessun giocatore salvato ancora.<br />
+                      <span style={{ fontSize: 12 }}>I nomi vengono salvati automaticamente al termine di ogni torneo.</span>
+                    </div>
+                  ) : (
+                    <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                      {playerNames.map((p) => (
+                        <div key={p.id} style={{
+                          display: "flex", alignItems: "center", gap: 10,
+                          background: COLORS.surface, border: `1px solid ${COLORS.border}`,
+                          borderRadius: 8, padding: "10px 14px",
+                        }}>
+                          <div style={{ fontSize: 14 }}>👤</div>
+                          <div style={{ flex: 1, fontSize: 13, color: COLORS.text }}>{p.name}</div>
+                          <div style={{ fontSize: 11, color: COLORS.textDim, fontFamily: "Crimson Pro, serif", marginRight: 8 }}>
+                            {formatDate(p.createdAt)}
+                          </div>
+                          <button
+                            onClick={() => { if (window.confirm(`Eliminare "${p.name}" dai suggerimenti?`)) onDeletePlayer(p.id); }}
+                            style={{
+                              background: COLORS.red + "22", color: COLORS.red,
+                              border: `1px solid ${COLORS.red}44`, borderRadius: 6,
+                              padding: "4px 10px", cursor: "pointer", fontSize: 11,
+                              fontFamily: "Cinzel, serif", flexShrink: 0,
+                            }}
+                          >🗑 Rimuovi</button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
           )}
         </div>
@@ -573,8 +624,6 @@ export default function App() {
   const [pairings, setPairings] = useState([]);
   const [allRounds, setAllRounds] = useState([]);
   const [activeTab, setActiveTab] = useState("pairings");
-  const [editingName, setEditingName] = useState(null);
-  const [tempName, setTempName] = useState("");
 
   // Timer
   const [timerSeconds, setTimerSeconds] = useState(0);
@@ -589,6 +638,9 @@ export default function App() {
   const [selectedTournamentId, setSelectedTournamentId] = useState(null);
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState(null);
+
+  // Player names (autocomplete)
+  const [savedPlayerNames, setSavedPlayerNames] = useState([]);
 
   // Admin
   const [adminOpen, setAdminOpen] = useState(false);
@@ -610,11 +662,46 @@ export default function App() {
 
   useEffect(() => {
     fetchTournaments();
+    fetchPlayerNames();
   }, []);
 
   // ============================================================
   // FIREBASE FUNCTIONS
   // ============================================================
+
+  const fetchPlayerNames = async () => {
+    try {
+      const snapshot = await getDocs(query(collection(db, "players"), orderBy("name", "asc")));
+      setSavedPlayerNames(snapshot.docs.map((d) => ({ id: d.id, ...d.data() })));
+    } catch (err) {
+      console.error("Errore caricamento nomi:", err.message);
+    }
+  };
+
+  const saveNewPlayerNames = async (names) => {
+    try {
+      // Get current names to avoid duplicates
+      const snapshot = await getDocs(collection(db, "players"));
+      const existing = new Set(snapshot.docs.map((d) => d.data().name?.toLowerCase()));
+      const toAdd = names.filter((n) => n && n.trim() && !n.startsWith("Giocatore ") && !existing.has(n.toLowerCase().trim()));
+      for (const name of toAdd) {
+        await addDoc(collection(db, "players"), { name: name.trim(), createdAt: serverTimestamp() });
+      }
+      if (toAdd.length > 0) fetchPlayerNames();
+    } catch (err) {
+      console.error("Errore salvataggio nomi:", err.message);
+    }
+  };
+
+  const deletePlayerName = async (id) => {
+    try {
+      await deleteDoc(doc(db, "players", id));
+      setSavedPlayerNames((prev) => prev.filter((p) => p.id !== id));
+    } catch (err) {
+      console.error("Errore cancellazione nome:", err.message);
+      alert("Errore nella cancellazione.");
+    }
+  };
 
   const fetchTournaments = async () => {
     setRegistroLoading(true);
@@ -672,6 +759,8 @@ export default function App() {
 
       await addDoc(collection(db, "tournaments"), tournamentDoc);
       fetchTournaments();
+      // Save new player names for autocomplete
+      saveNewPlayerNames(finalPlayers.map((p) => p.name));
     } catch (err) {
       console.error("Errore salvataggio torneo:", err.message);
       setSaveError("Errore nel salvataggio. Controlla la configurazione Firebase.");
@@ -1040,17 +1129,13 @@ export default function App() {
                           display: "flex", alignItems: "center", justifyContent: "center",
                           fontSize: 11, fontWeight: 700, color: "#000", flexShrink: 0,
                         }}>{p.id}</div>
-                        {editingName === p.id ? (
-                          <input autoFocus value={tempName}
-                            onChange={(e) => setTempName(e.target.value)}
-                            onBlur={() => { setPlayers((prev) => prev.map((x) => x.id === p.id ? { ...x, name: tempName || x.name } : x)); setEditingName(null); }}
-                            onKeyDown={(e) => { if (e.key === "Enter") { setPlayers((prev) => prev.map((x) => x.id === p.id ? { ...x, name: tempName || x.name } : x)); setEditingName(null); } }}
-                            style={{ background: "transparent", border: "none", outline: "none", color: COLORS.text, fontSize: 13, width: "100%", fontFamily: "Cinzel, serif" }}
-                          />
-                        ) : (
-                          <div onClick={() => { setEditingName(p.id); setTempName(p.name); }} style={{ fontSize: 13, cursor: "pointer", flex: 1 }}>{p.name}</div>
-                        )}
-                        <span style={{ fontSize: 10, color: COLORS.textDim, cursor: "pointer" }} onClick={() => { setEditingName(p.id); setTempName(p.name); }}>✏️</span>
+                        <PlayerCombobox
+                          value={p.name}
+                          suggestions={savedPlayerNames.map((s) => s.name)}
+                          onChange={(name) =>
+                            setPlayers((prev) => prev.map((x) => x.id === p.id ? { ...x, name: name || x.name } : x))
+                          }
+                        />
                       </div>
                     ))}
                   </div>
@@ -1549,10 +1634,12 @@ export default function App() {
           onClose={() => setAdminOpen(false)}
           tournaments={registroTournaments}
           loading={registroLoading}
-          onRefresh={fetchTournaments}
+          onRefresh={() => { fetchTournaments(); fetchPlayerNames(); }}
           onDelete={deleteTournament}
           onSelect={handleSelectTournament}
           selectedId={selectedTournamentId}
+          playerNames={savedPlayerNames}
+          onDeletePlayer={deletePlayerName}
         />
       )}
     </div>
