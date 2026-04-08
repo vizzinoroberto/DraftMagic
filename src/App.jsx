@@ -373,6 +373,79 @@ function ClassificaGenerale({ tournaments }) {
 }
 
 // ============================================================
+// PLAYER COMBOBOX COMPONENT
+// ============================================================
+
+function PlayerCombobox({ value, onChange, suggestions }) {
+  const [open, setOpen] = useState(false);
+  const [input, setInput] = useState(value);
+  const containerRef = useRef(null);
+
+  useEffect(() => { setInput(value); }, [value]);
+
+  useEffect(() => {
+    const handler = (e) => {
+      if (containerRef.current && !containerRef.current.contains(e.target)) setOpen(false);
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, []);
+
+  const filtered = suggestions.filter(
+    (s) => s.toLowerCase().includes(input.toLowerCase())
+  );
+
+  const commit = (name) => {
+    const final = name !== undefined ? name : input;
+    setInput(final);
+    onChange(final);
+    setOpen(false);
+  };
+
+  return (
+    <div ref={containerRef} style={{ position: "relative", flex: 1, minWidth: 0 }}>
+      <input
+        value={input}
+        onChange={(e) => { setInput(e.target.value); onChange(e.target.value); setOpen(true); }}
+        onFocus={() => setOpen(true)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") { commit(undefined); e.target.blur(); }
+          if (e.key === "Escape") setOpen(false);
+        }}
+        style={{
+          background: "transparent", border: "none", outline: "none",
+          color: "#e8dcc8", fontSize: 13, width: "100%", fontFamily: "Cinzel, serif",
+        }}
+      />
+      {open && filtered.length > 0 && (
+        <div style={{
+          position: "absolute", top: "calc(100% + 4px)", left: -44, right: -12,
+          background: "#1a2235", border: "1px solid #c89b3c",
+          borderRadius: 8, zIndex: 500, maxHeight: 180, overflowY: "auto",
+          boxShadow: "0 4px 20px rgba(0,0,0,0.6)",
+        }}>
+          {filtered.map((s) => (
+            <div
+              key={s}
+              onMouseDown={(e) => { e.preventDefault(); commit(s); }}
+              style={{
+                padding: "9px 14px", cursor: "pointer", fontSize: 13,
+                color: "#e8dcc8", borderBottom: "1px solid rgba(42,53,80,0.4)",
+                fontFamily: "Cinzel, serif",
+              }}
+              onMouseEnter={(e) => e.currentTarget.style.background = "#111827"}
+              onMouseLeave={(e) => e.currentTarget.style.background = "transparent"}
+            >
+              {s}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ============================================================
 // REGISTRO COMPONENT
 // ============================================================
 
