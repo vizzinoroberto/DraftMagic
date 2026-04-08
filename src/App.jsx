@@ -99,9 +99,15 @@ function formatTime(seconds) {
   return `${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
 }
 
-function formatDate(isoString) {
-  return new Date(isoString).toLocaleDateString("it-IT", {
+function formatDate(value) {
+  // Firestore Timestamp ha il metodo toDate(), altrimenti è già una stringa/Date
+  const date = value && typeof value.toDate === "function"
+    ? value.toDate()
+    : new Date(value);
+  if (isNaN(date.getTime())) return "—";
+  return date.toLocaleDateString("it-IT", {
     day: "2-digit", month: "2-digit", year: "numeric",
+    hour: "2-digit", minute: "2-digit",
   });
 }
 
