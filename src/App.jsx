@@ -99,13 +99,18 @@ function formatTime(seconds) {
   return `${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
 }
 
+function getDateFromValue(value) {
+  if (!value) return null;
+  if (typeof value.toDate === "function") return value.toDate();
+  if (value.seconds !== undefined) return new Date(value.seconds * 1000);
+  const d = new Date(value);
+  return isNaN(d.getTime()) ? null : d;
+}
+
 function formatDate(value) {
-  // Firestore Timestamp ha il metodo toDate(), altrimenti è già una stringa/Date
-  const date = value && typeof value.toDate === "function"
-    ? value.toDate()
-    : new Date(value);
-  if (isNaN(date.getTime())) return "—";
-  return date.toLocaleDateString("it-IT", {
+  const d = getDateFromValue(value);
+  if (!d) return "—";
+  return d.toLocaleDateString("it-IT", {
     day: "2-digit", month: "2-digit", year: "numeric",
     hour: "2-digit", minute: "2-digit",
   });
@@ -201,6 +206,173 @@ function RectangularTable({ players }) {
 }
 
 // ============================================================
+// CLASSIFICA GENERALE COMPONENT
+// ============================================================
+
+function ClassificaGenerale({ tournaments }) {
+  const [filterMode, setFilterMode] = useState("all"); // "all" | "year" | "custom"
+  const [filterYear, setFilterYear] = useState(new Date().getFullYear());
+  const [dateFrom, setDateFrom] = useState("");
+  const [dateTo, setDateTo] = useState("");
+
+  // Available years from tournament data
+  const years = [...new Set(
+    tournaments
+      .map(t => getDateFromValue(t.createdAt))
+      .filter(Boolean)
+      .map(d => d.getFullYear())
+  )].sort((a, b) => b - a);
+
+  // Filter tournaments by selected period
+  const filtered = tournaments.filter(t => {
+    if (filterMode === "all") return true;
+    const d = getDateFromValue(t.createdAt);
+    if (!d) return false;
+    if (filterMode === "year") return d.getFullYear() === filterYear;
+    if (filterMode === "custom") {
+      const from = dateFrom ? new Date(dateFrom) : null;
+      const to = dateTo ? new Date(dateTo + "T23:59:59") : null;
+      if (from && d < from) return false;
+      if (to && d > to) return false;
+      return true;
+    }
+    return true;
+  });
+
+  // Aggregate player stats across filtered tournaments
+  const playerStats = {};
+  filtered.forEach(t => {
+    const standings = [...(t.tournament_standings || [])].sort((a, b) => a.position - b.position);
+    standings.forEach(s => {
+      const name = s.player_name;
+      if (!playerStats[name]) {
+        playerStats[name] = { name, wins: 0, second: 0, third: 0, played: 0, points: 0 };
+      }
+      playerStats[name].played++;
+      if (s.position === 1) { playerStats[name].wins++;   playerStats[name].points += 3; }
+      if (s.position === 2) { playerStats[name].second++; playerStats[name].points += 2; }
+      if (s.position === 3) { playerStats[name].third++;  playerStats[name].points += 1; }
+    });
+  });
+
+  const leaderboard = Object.values(playerStats).sort((a, b) => {
+    if (b.wins    !== a.wins)    return b.wins    - a.wins;
+    if (b.points  !== a.points)  return b.points  - a.points;
+    if (b.second  !== a.second)  return b.second  - a.second;
+    if (b.third   !== a.third)   return b.third   - a.third;
+    return b.played - a.played;
+  });
+
+  const btnStyle = (active) => ({
+    padding: "6px 14px", borderRadius: 6, cursor: "pointer",
+    fontFamily: "Cinzel, serif", fontSize: 11, letterSpacing: 1,
+    background: active ? COLORS.accent : COLORS.surface,
+    color: active ? "#000" : COLORS.textDim,
+    border: `1px solid ${active ? COLORS.accent : COLORS.border}`,
+    fontWeight: active ? 700 : 400,
+  });
+
+  return (
+    <div>
+      {/* Filter bar */}
+      <div style={{ marginBottom: 16 }}>
+        <div style={{ fontSize: 11, color: COLORS.textDim, letterSpacing: 2, marginBottom: 10 }}>PERIODO</div>
+        <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
+          <button style={btnStyle(filterMode === "all")} onClick={() => setFilterMode("all")}>Tutti i tornei</button>
+          <button style={btnStyle(filterMode === "year")} onClick={() => setFilterMode("year")}>Per anno</button>
+          <button style={btnStyle(filterMode === "custom")} onClick={() => setFilterMode("custom")}>Periodo personalizzato</button>
+        </div>
+
+        {filterMode === "year" && (
+          <div style={{ marginTop: 10, display: "flex", gap: 6, flexWrap: "wrap" }}>
+            {years.length > 0 ? years.map(y => (
+              <button key={y} style={btnStyle(filterYear === y)} onClick={() => setFilterYear(y)}>{y}</button>
+            )) : (
+              <span style={{ fontSize: 12, color: COLORS.textDim, fontFamily: "Crimson Pro, serif" }}>Nessun anno disponibile</span>
+            )}
+          </div>
+        )}
+
+        {filterMode === "custom" && (
+          <div style={{ marginTop: 10, display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+              <span style={{ fontSize: 11, color: COLORS.textDim }}>Dal</span>
+              <input type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)}
+                style={{
+                  background: COLORS.surface, border: `1px solid ${COLORS.border}`,
+                  color: COLORS.text, borderRadius: 6, padding: "6px 10px",
+                  fontSize: 12, fontFamily: "Cinzel, serif", outline: "none",
+                }} />
+            </div>
+            <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+              <span style={{ fontSize: 11, color: COLORS.textDim }}>Al</span>
+              <input type="date" value={dateTo} onChange={e => setDateTo(e.target.value)}
+                style={{
+                  background: COLORS.surface, border: `1px solid ${COLORS.border}`,
+                  color: COLORS.text, borderRadius: 6, padding: "6px 10px",
+                  fontSize: 12, fontFamily: "Cinzel, serif", outline: "none",
+                }} />
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Summary */}
+      <div style={{ fontSize: 11, color: COLORS.textDim, marginBottom: 12, fontFamily: "Crimson Pro, serif", fontStyle: "italic" }}>
+        {filtered.length} torneo{filtered.length !== 1 ? "i" : ""} nel periodo selezionato · {leaderboard.length} giocatori
+      </div>
+
+      {/* Leaderboard */}
+      {leaderboard.length === 0 ? (
+        <div style={{ textAlign: "center", padding: 24, color: COLORS.textDim, fontFamily: "Crimson Pro, serif" }}>
+          <div style={{ fontSize: 28, marginBottom: 8 }}>📭</div>
+          Nessun dato per il periodo selezionato
+        </div>
+      ) : (
+        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+          <thead>
+            <tr style={{ color: COLORS.textDim, fontSize: 10, letterSpacing: 1 }}>
+              {["#", "Giocatore", "🥇", "🥈", "🥉", "Tornei", "Punti"].map(h => (
+                <th key={h} style={{ textAlign: h === "Giocatore" ? "left" : "center", padding: "6px 8px", borderBottom: `1px solid ${COLORS.border}` }}>{h}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {leaderboard.map((p, i) => (
+              <tr key={p.name} style={{
+                background: i === 0 ? COLORS.accent + "11" : "transparent",
+                borderBottom: `1px solid ${COLORS.border}22`,
+              }}>
+                <td style={{ textAlign: "center", padding: "10px 8px" }}>
+                  <span style={{
+                    display: "inline-flex", width: 22, height: 22, borderRadius: "50%",
+                    alignItems: "center", justifyContent: "center",
+                    background: i === 0 ? COLORS.accent : i === 1 ? "#9a9a9a" : i === 2 ? "#cd7f32" : COLORS.card,
+                    color: i < 3 ? "#000" : COLORS.textDim, fontSize: 11, fontWeight: 700,
+                  }}>{i + 1}</span>
+                </td>
+                <td style={{ padding: "10px 8px", fontWeight: i === 0 ? 700 : 400 }}>{p.name}</td>
+                <td style={{ textAlign: "center", padding: "10px 8px", color: COLORS.accent, fontWeight: 700 }}>{p.wins || "—"}</td>
+                <td style={{ textAlign: "center", padding: "10px 8px", color: "#9a9a9a" }}>{p.second || "—"}</td>
+                <td style={{ textAlign: "center", padding: "10px 8px", color: "#cd7f32" }}>{p.third || "—"}</td>
+                <td style={{ textAlign: "center", padding: "10px 8px", color: COLORS.textDim }}>{p.played}</td>
+                <td style={{ textAlign: "center", padding: "10px 8px", color: COLORS.blue, fontWeight: 700 }}>{p.points}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+
+      {leaderboard.length > 0 && (
+        <div style={{ marginTop: 12, fontSize: 10, color: COLORS.textDim, fontFamily: "Crimson Pro, serif", fontStyle: "italic" }}>
+          Punti classifica: 🥇 = 3pt · 🥈 = 2pt · 🥉 = 1pt
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ============================================================
 // REGISTRO COMPONENT
 // ============================================================
 
@@ -243,7 +415,7 @@ function RegistroPanel({ isAdmin, tournaments, loading, onRefresh, onDelete, onS
                   <span style={{ color: COLORS.accent }}>🥇</span> {winner}
                 </div>
                 <div style={{ fontSize: 11, color: COLORS.textDim, marginTop: 2 }}>
-                  {formatDate(t.created_at)} · {t.player_count} giocatori · {t.total_rounds} turni
+                  {formatDate(t.createdAt)} · {t.player_count} giocatori · {t.total_rounds} turni
                 </div>
               </div>
               {isAdmin && (
@@ -771,7 +943,7 @@ export default function App() {
             </div>
 
             <div style={{ display: "flex", gap: 3, marginBottom: 0 }}>
-              {[["players", "👤 Giocatori"], ["timer", "⏱ Timer"], ["registro", "📋 Registro"]].map(([tab, label]) => (
+              {[["players", "👤 Giocatori"], ["timer", "⏱ Timer"], ["registro", "📋 Registro"], ["classifica", "🏅 Classifica Generale"]].map(([tab, label]) => (
                 <button key={tab} onClick={() => setSetupTab(tab)} style={{
                   padding: "9px 14px", borderRadius: "8px 8px 0 0",
                   background: setupTab === tab ? COLORS.card : COLORS.surface,
@@ -924,6 +1096,11 @@ export default function App() {
                 </div>
               )}
 
+              {/* TAB: CLASSIFICA GENERALE */}
+              {setupTab === "classifica" && (
+                <ClassificaGenerale tournaments={registroTournaments} />
+              )}
+
               {/* TAB: REGISTRO */}
               {setupTab === "registro" && (
                 <div>
@@ -947,7 +1124,7 @@ export default function App() {
               )}
             </div>
 
-            {setupTab !== "registro" && (
+            {setupTab !== "registro" && setupTab !== "classifica" && (
               <button onClick={startDraft} style={{
                 width: "100%", padding: "16px", borderRadius: 10,
                 background: `linear-gradient(135deg, ${COLORS.accentDark}, ${COLORS.accent})`,
