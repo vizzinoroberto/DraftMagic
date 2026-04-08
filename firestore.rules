@@ -1,0 +1,11 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Lettura pubblica per tutti (registro tornei visibile a chiunque)
+    // Scrittura pubblica (l'app salva i tornei direttamente)
+    // La protezione admin è gestita lato client con password
+    match /tournaments/{document=**} {
+      allow read, write: if true;
+    }
+  }
+}
