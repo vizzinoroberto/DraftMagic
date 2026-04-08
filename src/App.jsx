@@ -45,6 +45,47 @@ function generateRoundRobinSchedule(players) {
   return rounds;
 }
 
+function swissRoundsCount(n) {
+  if (n <= 8) return 3;
+  if (n <= 16) return 4;
+  return 5;
+}
+
+function generateSwissPairings(players, history) {
+  const sorted = [...players].sort((a, b) => {
+    if (b.points !== a.points) return b.points - a.points;
+    if (b.omwp !== a.omwp) return b.omwp - a.omwp;
+    return b.wins - a.wins;
+  });
+  const paired = new Set();
+  const pairings = [];
+  for (let i = 0; i < sorted.length; i++) {
+    if (paired.has(sorted[i].id)) continue;
+    let partner = null;
+    // Prima prova senza rivincita
+    for (let j = i + 1; j < sorted.length; j++) {
+      if (paired.has(sorted[j].id)) continue;
+      const key = [sorted[i].id, sorted[j].id].sort().join("-");
+      if (!history.has(key)) { partner = sorted[j]; break; }
+    }
+    // Se necessario, ammetti rivincita
+    if (!partner) {
+      for (let j = i + 1; j < sorted.length; j++) {
+        if (!paired.has(sorted[j].id)) { partner = sorted[j]; break; }
+      }
+    }
+    if (partner) {
+      pairings.push({ p1: sorted[i], p2: partner, score: null });
+      paired.add(sorted[i].id);
+      paired.add(partner.id);
+    } else {
+      pairings.push({ p1: sorted[i], p2: null, score: null });
+      paired.add(sorted[i].id);
+    }
+  }
+  return pairings;
+}
+
 function scoreToPoints(p1s, p2s) {
   if (p1s > p2s) return { p1pts: 3, p2pts: 0, p1win: true, p2win: false };
   if (p2s > p1s) return { p1pts: 0, p2pts: 3, p1win: false, p2win: true };
@@ -345,8 +386,11 @@ export default function App() {
     }))
   );
   const [matchDuration, setMatchDuration] = useState(50);
+  const [tournamentType, setTournamentType] = useState("roundrobin"); // "roundrobin" | "swiss"
   const [draftSeating, setDraftSeating] = useState([]);
   const [schedule, setSchedule] = useState([]);
+  const [swissTotalRounds, setSwissTotalRounds] = useState(0);
+  const [swissMatchHistory, setSwissMatchHistory] = useState(new Set());
   const [round, setRound] = useState(1);
   const [pairings, setPairings] = useState([]);
   const [allRounds, setAllRounds] = useState([]);
@@ -504,9 +548,19 @@ export default function App() {
     }));
 
   const startTournament = () => {
-    const sched = generateRoundRobinSchedule(players);
-    setSchedule(sched);
-    setPairings(buildPairings(1, players, sched));
+    if (tournamentType === "roundrobin") {
+      const sched = generateRoundRobinSchedule(players);
+      setSchedule(sched);
+      setSwissTotalRounds(0);
+      setSwissMatchHistory(new Set());
+      setPairings(buildPairings(1, players, sched));
+    } else {
+      const total = swissRoundsCount(players.length);
+      setSwissTotalRounds(total);
+      setSchedule([]);
+      setSwissMatchHistory(new Set());
+      setPairings(generateSwissPairings(players, new Set()));
+    }
     setRound(1);
     setScreen(SCREENS.TOURNAMENT);
     setActiveTab("pairings");
@@ -516,7 +570,7 @@ export default function App() {
   const setMatchScore = (idx, score) =>
     setPairings((prev) => prev.map((p, i) => (i === idx ? { ...p, score } : p)));
 
-  const totalRounds = schedule.length;
+  const totalRounds = tournamentType === "swiss" ? swissTotalRounds : schedule.length;
   const allResultsIn = pairings.length > 0 && pairings.every((p) => p.score !== null);
 
   const confirmRound = () => {
@@ -557,16 +611,37 @@ export default function App() {
     setAllRounds(newAllRounds);
 
     const isLast = round >= totalRounds;
-    if (isLast) {
-      setTimerRunning(false);
-      saveTournament(updated, newAllRounds, totalRounds);
-      setScreen(SCREENS.RESULTS);
+
+    if (tournamentType === "swiss") {
+      // Aggiorna storico incontri Swiss
+      const newHistory = new Set(swissMatchHistory);
+      pairings.forEach(({ p1, p2 }) => {
+        if (p2) newHistory.add([p1.id, p2.id].sort().join("-"));
+      });
+      setSwissMatchHistory(newHistory);
+      if (isLast) {
+        setTimerRunning(false);
+        saveTournament(updated, newAllRounds, swissTotalRounds);
+        setScreen(SCREENS.RESULTS);
+      } else {
+        const next = round + 1;
+        setRound(next);
+        setPairings(generateSwissPairings(updated, newHistory));
+        setActiveTab("pairings");
+        startTimer();
+      }
     } else {
-      const next = round + 1;
-      setRound(next);
-      setPairings(buildPairings(next, updated, schedule));
-      setActiveTab("pairings");
-      startTimer();
+      if (isLast) {
+        setTimerRunning(false);
+        saveTournament(updated, newAllRounds, totalRounds);
+        setScreen(SCREENS.RESULTS);
+      } else {
+        const next = round + 1;
+        setRound(next);
+        setPairings(buildPairings(next, updated, schedule));
+        setActiveTab("pairings");
+        startTimer();
+      }
     }
   };
 
@@ -685,7 +760,7 @@ export default function App() {
               <img
                 src={MAGIC_LOGO}
                 alt="Magic: The Gathering"
-                style={{ maxWidth: 340, width: "100%", filter: "drop-shadow(0 0 18px #c89b3c55)" }}
+                style={{ maxWidth: 510, width: "100%", filter: "drop-shadow(0 0 18px #c89b3c55)" }}
               />
             </div>
 
@@ -709,8 +784,8 @@ export default function App() {
               {/* TAB: GIOCATORI */}
               {setupTab === "players" && (
                 <div>
-                  <div style={{ fontSize: 12, color: COLORS.textDim, marginBottom: 12, letterSpacing: 2 }}>NUMERO GIOCATORI</div>
-                  <div style={{ display: "flex", gap: 8, marginBottom: 20 }}>
+                  <div style={{ fontSize: 12, color: COLORS.textDim, marginBottom: 12, letterSpacing: 2 }}>NUMERO GIOCATORI E FORMATO</div>
+                  <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 12, flexWrap: "wrap" }}>
                     {[6, 7, 8, 9, 10].map((n) => (
                       <button key={n} onClick={() => handlePlayerCountChange(n)} style={{
                         width: 48, height: 48, borderRadius: 8,
@@ -721,7 +796,58 @@ export default function App() {
                         boxShadow: playerCount === n ? `0 0 16px ${COLORS.accentGlow}` : "none",
                       }}>{n}</button>
                     ))}
+                    <select
+                      value={tournamentType}
+                      onChange={(e) => setTournamentType(e.target.value)}
+                      style={{
+                        background: COLORS.surface, border: `1px solid ${COLORS.accent}`,
+                        color: COLORS.accent, borderRadius: 8, padding: "10px 14px",
+                        fontSize: 12, fontFamily: "Cinzel, serif", letterSpacing: 1,
+                        cursor: "pointer", outline: "none", height: 48, flexShrink: 0,
+                      }}>
+                      <option value="roundrobin">🔄 All'italiana (Round Robin)</option>
+                      <option value="swiss">🇨🇭 Alla Svizzera (Swiss)</option>
+                    </select>
                   </div>
+                  {/* Info turni */}
+                  {(() => {
+                    const isRR = tournamentType === "roundrobin";
+                    const n = playerCount;
+                    const rounds = isRR
+                      ? (n % 2 === 0 ? n - 1 : n)
+                      : swissRoundsCount(n);
+                    const matchesPerRound = Math.floor(n / 2);
+                    const totalMatches = isRR
+                      ? rounds * matchesPerRound
+                      : rounds * matchesPerRound;
+                    return (
+                      <div style={{
+                        background: COLORS.surface, border: `1px solid ${COLORS.border}`,
+                        borderRadius: 8, padding: "10px 14px", marginBottom: 16,
+                        display: "flex", gap: 24, alignItems: "center", flexWrap: "wrap",
+                      }}>
+                        <div style={{ display: "flex", flexDirection: "column", alignItems: "center" }}>
+                          <span style={{ fontSize: 22, fontWeight: 700, color: COLORS.accent }}>{rounds}</span>
+                          <span style={{ fontSize: 10, color: COLORS.textDim, letterSpacing: 1 }}>TURNI</span>
+                        </div>
+                        <div style={{ width: 1, height: 32, background: COLORS.border }} />
+                        <div style={{ display: "flex", flexDirection: "column", alignItems: "center" }}>
+                          <span style={{ fontSize: 22, fontWeight: 700, color: COLORS.blue }}>{matchesPerRound}</span>
+                          <span style={{ fontSize: 10, color: COLORS.textDim, letterSpacing: 1 }}>MATCH/TURNO</span>
+                        </div>
+                        <div style={{ width: 1, height: 32, background: COLORS.border }} />
+                        <div style={{ display: "flex", flexDirection: "column", alignItems: "center" }}>
+                          <span style={{ fontSize: 22, fontWeight: 700, color: COLORS.green }}>{totalMatches}</span>
+                          <span style={{ fontSize: 10, color: COLORS.textDim, letterSpacing: 1 }}>MATCH TOTALI</span>
+                        </div>
+                        <div style={{ marginLeft: "auto", fontSize: 11, color: COLORS.textDim, fontFamily: "Crimson Pro, serif", fontStyle: "italic" }}>
+                          {isRR
+                            ? "Tutti contro tutti — ogni coppia si affronta una volta"
+                            : "Abbinamenti per punteggio — avversari simili ad ogni turno"}
+                        </div>
+                      </div>
+                    );
+                  })()}
                   <div style={{ fontSize: 12, color: COLORS.textDim, marginBottom: 10, letterSpacing: 2 }}>NOMI GIOCATORI</div>
                   <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(200px, 1fr))", gap: 8 }}>
                     {players.map((p) => (
@@ -1126,6 +1252,7 @@ export default function App() {
             <button onClick={() => {
               setScreen(SCREENS.SETUP); setSetupTab("registro");
               setRound(1); setAllRounds([]); setSchedule([]); setPairings([]); setDraftSeating([]);
+              setSwissTotalRounds(0); setSwissMatchHistory(new Set());
               setTimerRunning(false); setTimerExpired(false);
               setPlayers(Array.from({ length: playerCount }, (_, i) => ({
                 id: i + 1, name: `Giocatore ${i + 1}`,
